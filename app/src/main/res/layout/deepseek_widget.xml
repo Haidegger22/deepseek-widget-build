@@ -1,40 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_background"
-    android:orientation="horizontal"
-    android:gravity="center_vertical"
     android:padding="4dp">
 
-    <!-- Camera button -->
-    <ImageButton
-        android:id="@+id/camera_button"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:background="@android:color/transparent"
-        android:contentDescription="@string/content_desc_camera"
-        android:scaleType="centerInside"
-        android:src="@drawable/ic_camera" />
-
-    <!-- Vertical divider -->
+    <!-- DeepSeek whale mascot as background (subtle, low alpha) -->
     <ImageView
-        android:layout_width="1dp"
-        android:layout_height="24dp"
-        android:background="#33FFFFFF"
-        android:importantForAccessibility="no" />
-
-    <!-- Mic button -->
-    <ImageButton
-        android:id="@+id/mic_button"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_weight="1"
-        android:background="@android:color/transparent"
-        android:contentDescription="@string/content_desc_voice"
+        android:layout_gravity="center"
+        android:alpha="0.40"
+        android:contentDescription="@null"
+        android:importantForAccessibility="no"
         android:scaleType="centerInside"
-        android:src="@drawable/ic_mic" />
+        android:src="@drawable/ic_deepseek_whale" />
 
-</LinearLayout>
+    <!-- Buttons row: camera | mic (neon icons on top of the whale) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageButton
+            android:id="@+id/camera_button"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/content_desc_camera"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_camera_neon" />
+
+        <ImageButton
+            android:id="@+id/mic_button"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/content_desc_voice"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_mic_neon" />
+
+    </LinearLayout>
+
+</FrameLayout>

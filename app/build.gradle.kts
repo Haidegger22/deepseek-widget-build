@@ -23,12 +23,8 @@ android {
         applicationId = "com.yourdomain.deepseekwidget"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.9"
-        // Ключ Deepgram для встроенного STT. В CI подставляется из secrets,
-        // локально — из env DEEPGRAM_API_KEY. В git ключ не попадает.
-        val deepgramKey = System.getenv("DEEPGRAM_API_KEY") ?: ""
-        buildConfigField("String", "DEEPGRAM_API_KEY", "\"$deepgramKey\"")
+        versionCode = 10
+        versionName = "2.0"
     }
 
     buildFeatures {

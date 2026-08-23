@@ -1,16 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Widget background shape.
-
-    NOTE: The <padding> block has been intentionally removed.
-    Android adds a shape drawable's <padding> on top of any layout-defined padding,
-    causing double padding. All padding is defined in deepseek_widget.xml instead.
+    Widget background shape — 40% transparent dark blue.
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
 
-    <!-- Use @color reference instead of hardcoded hex for single-point maintenance -->
-    <solid android:color="@color/dark_blue" />
+    <!-- 0x66 alpha ≈ 40% непрозрачности (60% прозрачности) -->
+    <solid android:color="#66101418" />
     <corners android:radius="24dp" />
 
 </shape>
