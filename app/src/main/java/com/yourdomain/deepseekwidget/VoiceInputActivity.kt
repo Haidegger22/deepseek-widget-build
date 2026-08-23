@@ -46,6 +46,8 @@ class VoiceInputActivity : AppCompatActivity() {
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
     private var listeningStartMs = 0L
+    private var lastPartialText: String? = null
+    private var stopFallbackRunnable: Runnable? = null
     private val timerHandler = Handler(Looper.getMainLooper())
     private val timerRunnable = object : Runnable {
         override fun run() {
@@ -80,6 +82,7 @@ class VoiceInputActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         timerHandler.removeCallbacks(timerRunnable)
+        stopFallbackRunnable?.let { timerHandler.removeCallbacks(it) }
         if (isListening) {
             speechRecognizer?.destroy()
             speechRecognizer = null
@@ -88,6 +91,7 @@ class VoiceInputActivity : AppCompatActivity() {
 
     override fun onBackPressed() {
         timerHandler.removeCallbacks(timerRunnable)
+        stopFallbackRunnable?.let { timerHandler.removeCallbacks(it) }
         if (isListening) {
             speechRecognizer?.cancel()
             speechRecognizer = null
@@ -182,6 +186,7 @@ class VoiceInputActivity : AppCompatActivity() {
         findViewById<Button>(R.id.stop_button).setOnClickListener { stopListening() }
 
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        lastPartialText = null
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
@@ -192,6 +197,8 @@ class VoiceInputActivity : AppCompatActivity() {
             }
             override fun onError(error: Int) {
                 Log.e(TAG, "SpeechRecognizer error: $error")
+                stopFallbackRunnable?.let { timerHandler.removeCallbacks(it) }
+                stopFallbackRunnable = null
                 timerHandler.removeCallbacks(timerRunnable)
                 isListening = false
                 speechRecognizer?.destroy()
@@ -207,6 +214,8 @@ class VoiceInputActivity : AppCompatActivity() {
                 val text = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
+                stopFallbackRunnable?.let { timerHandler.removeCallbacks(it) }
+                stopFallbackRunnable = null
                 timerHandler.removeCallbacks(timerRunnable)
                 isListening = false
                 speechRecognizer?.destroy()
@@ -218,7 +227,13 @@ class VoiceInputActivity : AppCompatActivity() {
                     finish()
                 }
             }
-            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onPartialResults(partialResults: Bundle?) {
+                // Копим частично распознанный текст — пригодится, если stopListening
+                // не вернёт onResults (некоторые распознаватели игнорируют его).
+                lastPartialText = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+            }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
 
@@ -253,7 +268,30 @@ class VoiceInputActivity : AppCompatActivity() {
             finish()
             return
         }
-        speechRecognizer?.stopListening() // результат придёт в onResults
+        // Просим распознаватель остановиться (асинхронно).
+        speechRecognizer?.stopListening()
+        // Фолбэк: некоторые распознаватели (Gboard) игнорируют stopListening и
+        // продолжают слушать до паузы. Если через 3 с результат не пришёл —
+        // завершаем принудительно (используем последний частичный текст).
+        val fallback = Runnable {
+            if (isListening) {
+                Log.d(TAG, "stopListening fallback: forcing finish")
+                timerHandler.removeCallbacks(timerRunnable)
+                isListening = false
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+                val partial = lastPartialText
+                if (!partial.isNullOrBlank()) {
+                    shareTextToDeepSeek(partial)
+                } else {
+                    Toast.makeText(this, R.string.voice_unavailable, Toast.LENGTH_SHORT).show()
+                    finish()
+                }
+            }
+        }
+        stopFallbackRunnable?.let { timerHandler.removeCallbacks(it) }
+        stopFallbackRunnable = fallback
+        timerHandler.postDelayed(fallback, 3000)
     }
 
     // ── Permissions ─────────────────────────────────────────────────────
