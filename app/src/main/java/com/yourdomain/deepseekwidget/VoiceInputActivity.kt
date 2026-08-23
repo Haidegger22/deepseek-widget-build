@@ -5,13 +5,13 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.MediaRecorder
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
 import android.widget.Button
 import android.widget.TextView
@@ -28,25 +28,27 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Trampoline activity for widget taps: camera capture, voice recording, chat routing.
+ * Trampoline activity for widget taps: camera capture, voice input, chat routing.
  *
- * Voice flow: one tap on the widget mic → this activity shows an in-app recording
- * screen (MediaRecorder) → "Stop & send" shares the audio file to the DeepSeek app.
- * No second tap inside the DeepSeek chat is needed.
+ * Voice flow (one tap on the widget mic):
+ *   1. RecognizerIntent (like the original widget) if a recognizer activity exists;
+ *   2. otherwise SpeechRecognizer API directly — works through the system
+ *      RecognitionService provided by Gboard / Speech Services, no Google app needed;
+ *   3. recognized text is shared to DeepSeek as text/plain (DeepSeek does NOT accept
+ *      audio files as voice messages — only text and images).
  */
 class VoiceInputActivity : AppCompatActivity() {
 
     private var currentPhotoPath: String? = null
 
-    // ── Voice recording state ───────────────────────────────────────────
-    private var mediaRecorder: MediaRecorder? = null
-    private var audioFile: File? = null
-    private var isRecording = false
-    private var recordingStartMs = 0L
+    // ── Voice recognition state ────────────────────────────────────────
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var isListening = false
+    private var listeningStartMs = 0L
     private val timerHandler = Handler(Looper.getMainLooper())
     private val timerRunnable = object : Runnable {
         override fun run() {
-            updateRecordingTimer()
+            updateListeningTimer()
             timerHandler.postDelayed(this, 1000)
         }
     }
@@ -77,15 +79,18 @@ class VoiceInputActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         timerHandler.removeCallbacks(timerRunnable)
-        if (isRecording) {
-            abortRecording()
+        if (isListening) {
+            speechRecognizer?.destroy()
+            speechRecognizer = null
         }
     }
 
     override fun onBackPressed() {
         timerHandler.removeCallbacks(timerRunnable)
-        if (isRecording) {
-            abortRecording()
+        if (isListening) {
+            speechRecognizer?.cancel()
+            speechRecognizer = null
+            isListening = false
         }
         super.onBackPressed()
     }
@@ -125,119 +130,129 @@ class VoiceInputActivity : AppCompatActivity() {
         }
     }
 
-    // ── Voice recording ─────────────────────────────────────────────────
+    // ── Voice input ─────────────────────────────────────────────────────
 
     private fun startVoiceFlow() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO_PERMISSION)
             return
         }
-        startRecording()
+
+        // 1. RecognizerIntent — если на устройстве есть activity-распознаватель
+        //    (Google app / Speech Services UI). Как в оригинальном виджете.
+        val resolvers = packageManager.queryIntentActivities(
+            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0
+        )
+        if (resolvers.isNotEmpty()) {
+            startSystemVoiceRecognition()
+            return
+        }
+
+        // 2. SpeechRecognizer API напрямую — работает через RecognitionService,
+        //    который предоставляет Gboard / Speech Services (без Google app).
+        if (SpeechRecognizer.isRecognitionAvailable(this)) {
+            startInAppSpeechRecognition()
+            return
+        }
+
+        // 3. Распознавание речи вообще недоступно
+        Toast.makeText(this, R.string.voice_unavailable, Toast.LENGTH_SHORT).show()
+        finish()
     }
 
-    /** Shows the in-app recording screen and starts MediaRecorder immediately. */
-    private fun startRecording() {
-        setContentView(R.layout.activity_voice_record)
-
-        findViewById<Button>(R.id.stop_button).setOnClickListener { stopAndSend() }
-
-        audioFile = File(cacheDir, "voice_${System.currentTimeMillis()}.ogg")
+    /** Old path: system recognizer activity with its own UI. */
+    private fun startSystemVoiceRecognition() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to DeepSeek")
+        }
         try {
-            mediaRecorder = MediaRecorder().apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                // DeepSeek принимает голосовые только в OGG/Opus (audio/opus).
-                // m4a/AAC он отклоняет («аудиосообщение не поддерживается»).
-                if (android.os.Build.VERSION.SDK_INT >= 29) {
-                    setOutputFormat(MediaRecorder.OutputFormat.OGG)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
-                } else {
-                    // Старые Android (до 10) не умеют Opus в MediaRecorder — fallback
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                }
-                setAudioSamplingRate(48000)
-                setAudioEncodingBitRate(64000)
-                setOutputFile(audioFile!!.absolutePath)
-                prepare()
-                start()
-            }
-            isRecording = true
-            recordingStartMs = System.currentTimeMillis()
-            timerHandler.post(timerRunnable)
-        } catch (e: Exception) {
-            Log.e(TAG, "MediaRecorder start failed", e)
-            Toast.makeText(this, R.string.voice_audio_error, Toast.LENGTH_SHORT).show()
+            startActivityForResult(intent, REQUEST_VOICE_RECOGNIZE)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "Voice recognition not supported", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
 
-    private fun updateRecordingTimer() {
-        val elapsed = (System.currentTimeMillis() - recordingStartMs) / 1000
+    /** In-app listening screen backed by SpeechRecognizer API (Gboard/Speech Services). */
+    private fun startInAppSpeechRecognition() {
+        setContentView(R.layout.activity_voice_record)
+
+        findViewById<Button>(R.id.stop_button).setOnClickListener { stopListening() }
+
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {
+                stopListening()
+            }
+            override fun onError(error: Int) {
+                Log.e(TAG, "SpeechRecognizer error: $error")
+                timerHandler.removeCallbacks(timerRunnable)
+                isListening = false
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+                Toast.makeText(
+                    this@VoiceInputActivity,
+                    "Ошибка распознавания ($error)",
+                    Toast.LENGTH_SHORT
+                ).show()
+                finish()
+            }
+            override fun onResults(results: Bundle?) {
+                val text = results
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                timerHandler.removeCallbacks(timerRunnable)
+                isListening = false
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+                if (!text.isNullOrBlank()) {
+                    shareTextToDeepSeek(text)
+                } else {
+                    Toast.makeText(this@VoiceInputActivity, R.string.voice_unavailable, Toast.LENGTH_SHORT).show()
+                    finish()
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+
+        try {
+            speechRecognizer?.startListening(intent)
+            isListening = true
+            listeningStartMs = System.currentTimeMillis()
+            timerHandler.post(timerRunnable)
+        } catch (e: Exception) {
+            Log.e(TAG, "startListening failed", e)
+            Toast.makeText(this, R.string.voice_unavailable, Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    private fun updateListeningTimer() {
+        val elapsed = (System.currentTimeMillis() - listeningStartMs) / 1000
         val mm = elapsed / 60
         val ss = elapsed % 60
         findViewById<TextView>(R.id.recording_timer)?.text =
             String.format(Locale.US, "%d:%02d", mm, ss)
     }
 
-    /** Stops recording and shares the audio file to the DeepSeek app. */
-    private fun stopAndSend() {
-        timerHandler.removeCallbacks(timerRunnable)
-        if (!isRecording) {
+    private fun stopListening() {
+        if (!isListening) {
             finish()
             return
         }
-        isRecording = false
-
-        try {
-            mediaRecorder?.stop()
-        } catch (e: Exception) {
-            Log.e(TAG, "MediaRecorder stop failed", e)
-        }
-        mediaRecorder?.release()
-        mediaRecorder = null
-
-        val file = audioFile
-        if (file != null && file.exists() && file.length() > 0) {
-            val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
-            shareAudioToDeepSeek(uri)
-        } else {
-            Toast.makeText(this, R.string.voice_audio_error, Toast.LENGTH_SHORT).show()
-            finish()
-        }
-    }
-
-    /** Cancels recording and deletes the partial audio file. */
-    private fun abortRecording() {
-        isRecording = false
-        try {
-            mediaRecorder?.stop()
-        } catch (_: Exception) {
-        }
-        mediaRecorder?.release()
-        mediaRecorder = null
-        audioFile?.delete()
-        audioFile = null
-    }
-
-    private fun shareAudioToDeepSeek(contentUri: Uri) {
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            setPackage(DEEPSEEK_PACKAGE)
-            // DeepSeek принимает голосовые только в OGG/Opus (audio/opus)
-            type = "audio/ogg"
-            putExtra(Intent.EXTRA_STREAM, contentUri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            startActivity(shareIntent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to share audio to DeepSeek", e)
-            // DeepSeek не принимает аудио-шеринг — открываем чат как раньше
-            Toast.makeText(this, "DeepSeek app not found", Toast.LENGTH_SHORT).show()
-            routeToDeepSeekNative("chat")
-            return
-        }
-        finish()
+        speechRecognizer?.stopListening() // результат придёт в onResults
     }
 
     // ── Permissions ─────────────────────────────────────────────────────
@@ -259,7 +274,7 @@ class VoiceInputActivity : AppCompatActivity() {
             }
             REQUEST_AUDIO_PERMISSION -> {
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    startRecording()
+                    startVoiceFlow()
                 } else {
                     Toast.makeText(this, R.string.perm_audio_denied, Toast.LENGTH_SHORT).show()
                     finish()
@@ -268,7 +283,7 @@ class VoiceInputActivity : AppCompatActivity() {
         }
     }
 
-    // ── Activity results (camera, legacy system voice) ──────────────────
+    // ── Activity results (camera, system voice) ─────────────────────────
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
