@@ -7,12 +7,24 @@ android {
     namespace = "com.yourdomain.deepseekwidget"
     compileSdk = 35
 
+    signingConfigs {
+        // Постоянный ключ подписи (лежит в репо) — все CI-сборки подписываются им.
+        // Без этого GitHub Actions генерирует новый debug-ключ на каждую сборку,
+        // и APK новой версии не устанавливается поверх старой.
+        create("release") {
+            storeFile = rootProject.file("keystore/deepseek-widget.keystore")
+            storePassword = "deepseek123"
+            keyAlias = "deepseek"
+            keyPassword = "deepseek123"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.yourdomain.deepseekwidget"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.3"
     }
 
     buildFeatures {
@@ -24,6 +36,7 @@ android {
     buildTypes {
         debug {
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("release")
         }
         release {
             // R8 full-mode: shrinks code and resources, reducing APK from ~4.5 MB to ~1 MB.
@@ -33,15 +46,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
-            // NOTE: signingConfig is NOT set here intentionally.
-            // The debug keystore must NOT be used for a public/Play Store release.
-            // To sign a release APK:
-            //   1. Generate a keystore: Build → Generate Signed Bundle/APK
-            //   2. Store credentials in keystore.properties (already in .gitignore)
-            //   3. Read them here via:
-            //      val keystoreProps = Properties().apply { load(rootProject.file("keystore.properties").inputStream()) }
-            //      signingConfig = signingConfigs.create("release") { ... }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

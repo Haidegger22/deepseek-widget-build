@@ -20,9 +20,10 @@ keystore.properties
 
 # ── Signing / Keystore files ─────────────────────────────────
 *.jks
-*.keystore
 *.p12
 *.hprof
+# Постоянный ключ подписи — коммитим, чтобы все CI-сборки были с одной подписью
+!keystore/deepseek-widget.keystore
 
 # ── Generated APKs & Bundles ─────────────────────────────────
 *.apk
