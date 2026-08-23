@@ -1,36 +1,55 @@
 package com.yourdomain.deepseekwidget
 
+import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import android.speech.RecognizerIntent
 import android.util.Log
+import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import com.yourdomain.deepseekwidget.Constants.DEEPSEEK_PACKAGE
-import com.yourdomain.deepseekwidget.Constants.DEEPSEEK_WEB_URL
 import com.yourdomain.deepseekwidget.Constants.EXTRA_LAUNCH_CAMERA
 import com.yourdomain.deepseekwidget.Constants.EXTRA_LAUNCH_VOICE
 import com.yourdomain.deepseekwidget.Constants.EXTRA_SKIP_VOICE
-
-import androidx.appcompat.app.AppCompatActivity
-import android.provider.MediaStore
-import android.speech.RecognizerIntent
-import androidx.core.content.FileProvider
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Transparent trampoline [AppCompatActivity] that routes widget taps to the native DeepSeek app.
+ * Trampoline activity for widget taps: camera capture, voice recording, chat routing.
  *
- * This activity acts as a high-performance router to launch DeepSeek's internal
- * features (Camera, Voice, Chat) directly or via system capture-and-share flows.
+ * Voice flow: one tap on the widget mic → this activity shows an in-app recording
+ * screen (MediaRecorder) → "Stop & send" shares the audio file to the DeepSeek app.
+ * No second tap inside the DeepSeek chat is needed.
  */
 class VoiceInputActivity : AppCompatActivity() {
 
     private var currentPhotoPath: String? = null
+
+    // ── Voice recording state ───────────────────────────────────────────
+    private var mediaRecorder: MediaRecorder? = null
+    private var audioFile: File? = null
+    private var isRecording = false
+    private var recordingStartMs = 0L
+    private val timerHandler = Handler(Looper.getMainLooper())
+    private val timerRunnable = object : Runnable {
+        override fun run() {
+            updateRecordingTimer()
+            timerHandler.postDelayed(this, 1000)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,9 +74,27 @@ class VoiceInputActivity : AppCompatActivity() {
         outState.putString(Constants.KEY_PHOTO_PATH, currentPhotoPath)
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        timerHandler.removeCallbacks(timerRunnable)
+        if (isRecording) {
+            abortRecording()
+        }
+    }
+
+    override fun onBackPressed() {
+        timerHandler.removeCallbacks(timerRunnable)
+        if (isRecording) {
+            abortRecording()
+        }
+        super.onBackPressed()
+    }
+
+    // ── Camera ──────────────────────────────────────────────────────────
+
     private fun startCameraFlow() {
-        if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(android.Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
         } else {
             openCamera()
         }
@@ -88,45 +125,141 @@ class VoiceInputActivity : AppCompatActivity() {
         }
     }
 
+    // ── Voice recording ─────────────────────────────────────────────────
+
+    private fun startVoiceFlow() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO_PERMISSION)
+            return
+        }
+        startRecording()
+    }
+
+    /** Shows the in-app recording screen and starts MediaRecorder immediately. */
+    private fun startRecording() {
+        setContentView(R.layout.activity_voice_record)
+
+        findViewById<Button>(R.id.stop_button).setOnClickListener { stopAndSend() }
+
+        audioFile = File(cacheDir, "voice_${System.currentTimeMillis()}.m4a")
+        try {
+            mediaRecorder = MediaRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioSamplingRate(44100)
+                setAudioEncodingBitRate(128000)
+                setOutputFile(audioFile!!.absolutePath)
+                prepare()
+                start()
+            }
+            isRecording = true
+            recordingStartMs = System.currentTimeMillis()
+            timerHandler.post(timerRunnable)
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaRecorder start failed", e)
+            Toast.makeText(this, R.string.voice_audio_error, Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    private fun updateRecordingTimer() {
+        val elapsed = (System.currentTimeMillis() - recordingStartMs) / 1000
+        val mm = elapsed / 60
+        val ss = elapsed % 60
+        findViewById<TextView>(R.id.recording_timer)?.text =
+            String.format(Locale.US, "%d:%02d", mm, ss)
+    }
+
+    /** Stops recording and shares the audio file to the DeepSeek app. */
+    private fun stopAndSend() {
+        timerHandler.removeCallbacks(timerRunnable)
+        if (!isRecording) {
+            finish()
+            return
+        }
+        isRecording = false
+
+        try {
+            mediaRecorder?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaRecorder stop failed", e)
+        }
+        mediaRecorder?.release()
+        mediaRecorder = null
+
+        val file = audioFile
+        if (file != null && file.exists() && file.length() > 0) {
+            val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+            shareAudioToDeepSeek(uri)
+        } else {
+            Toast.makeText(this, R.string.voice_audio_error, Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    /** Cancels recording and deletes the partial audio file. */
+    private fun abortRecording() {
+        isRecording = false
+        try {
+            mediaRecorder?.stop()
+        } catch (_: Exception) {
+        }
+        mediaRecorder?.release()
+        mediaRecorder = null
+        audioFile?.delete()
+        audioFile = null
+    }
+
+    private fun shareAudioToDeepSeek(contentUri: Uri) {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            setPackage(DEEPSEEK_PACKAGE)
+            type = "audio/mp4"
+            putExtra(Intent.EXTRA_STREAM, contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(shareIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to share audio to DeepSeek", e)
+            // DeepSeek не принимает аудио-шеринг — открываем чат как раньше
+            Toast.makeText(this, "DeepSeek app not found", Toast.LENGTH_SHORT).show()
+            routeToDeepSeekNative("chat")
+            return
+        }
+        finish()
+    }
+
+    // ── Permissions ─────────────────────────────────────────────────────
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_CAMERA_PERMISSION) {
-            if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                openCamera()
-            } else {
-                Toast.makeText(this, "Camera permission required", Toast.LENGTH_SHORT).show()
-                finish()
+        when (requestCode) {
+            REQUEST_CAMERA_PERMISSION -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    openCamera()
+                } else {
+                    Toast.makeText(this, "Camera permission required", Toast.LENGTH_SHORT).show()
+                    finish()
+                }
+            }
+            REQUEST_AUDIO_PERMISSION -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    startRecording()
+                } else {
+                    Toast.makeText(this, R.string.perm_audio_denied, Toast.LENGTH_SHORT).show()
+                    finish()
+                }
             }
         }
     }
 
-    private fun startVoiceFlow() {
-        // 1. Приоритет: встроенный голосовой ввод приложения DeepSeek.
-        //    Не зависит от Google/системного распознавателя речи.
-        if (packageManager.getLaunchIntentForPackage(DEEPSEEK_PACKAGE) != null) {
-            routeToDeepSeekNative("voice")
-            return
-        }
-        // 2. Запасной вариант: системное распознавание речи.
-        startSystemVoiceRecognition()
-    }
-
-    private fun startSystemVoiceRecognition() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to DeepSeek")
-        }
-        try {
-            startActivityForResult(intent, REQUEST_VOICE_RECOGNIZE)
-        } catch (e: ActivityNotFoundException) {
-            Toast.makeText(this, "Voice recognition not supported", Toast.LENGTH_SHORT).show()
-            finish()
-        }
-    }
+    // ── Activity results (camera, legacy system voice) ──────────────────
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -157,6 +290,8 @@ class VoiceInputActivity : AppCompatActivity() {
             finish()
         }
     }
+
+    // ── Sharing to DeepSeek ─────────────────────────────────────────────
 
     private fun shareToDeepSeek(contentUri: Uri, mimeType: String) {
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -192,6 +327,8 @@ class VoiceInputActivity : AppCompatActivity() {
             finish()
         }
     }
+
+    // ── Helpers ─────────────────────────────────────────────────────────
 
     private fun createImageFile(): File {
         val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -267,5 +404,6 @@ class VoiceInputActivity : AppCompatActivity() {
         private const val REQUEST_IMAGE_CAPTURE = 1001
         private const val REQUEST_VOICE_RECOGNIZE = 1002
         private const val REQUEST_CAMERA_PERMISSION = 1003
+        private const val REQUEST_AUDIO_PERMISSION = 1004
     }
 }

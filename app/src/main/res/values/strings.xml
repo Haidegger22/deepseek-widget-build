@@ -13,6 +13,9 @@
     <!-- Voice recognition -->
     <string name="voice_prompt">Speaking to DeepSeek…</string>
     <string name="voice_unavailable">Voice input is not available on this device</string>
+    <string name="voice_recording">Запись…</string>
+    <string name="voice_stop_send">Стоп и отправить</string>
+    <string name="voice_audio_error">Не удалось записать голосовое</string>
 
     <!-- Camera -->
     <string name="camera_unavailable">Camera is not available on this device</string>
