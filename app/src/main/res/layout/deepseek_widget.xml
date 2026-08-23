@@ -6,64 +6,35 @@
     android:background="@drawable/widget_background"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:padding="8dp">
+    android:padding="4dp">
 
-    <!-- Left: Logo + "Chat" label -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <ImageView
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:contentDescription="@string/content_desc_deepseek"
-            android:src="@drawable/ic_launcher" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:text="@string/chat"
-            android:textColor="@color/white"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-    </LinearLayout>
-
-    <!-- Spacer (LinearLayout вместо View — View не поддерживается в RemoteViews) -->
-    <LinearLayout
+    <!-- Camera button -->
+    <ImageButton
+        android:id="@+id/camera_button"
         android:layout_width="0dp"
-        android:layout_height="1dp"
+        android:layout_height="match_parent"
         android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:contentDescription="@string/content_desc_camera"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_camera" />
+
+    <!-- Vertical divider -->
+    <ImageView
+        android:layout_width="1dp"
+        android:layout_height="24dp"
+        android:background="#33FFFFFF"
         android:importantForAccessibility="no" />
 
-    <!-- Right: Camera and Mic buttons -->
-    <LinearLayout
-        android:layout_width="wrap_content"
+    <!-- Mic button -->
+    <ImageButton
+        android:id="@+id/mic_button"
+        android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <ImageButton
-            android:id="@+id/camera_button"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="@android:color/transparent"
-            android:contentDescription="@string/content_desc_camera"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_camera" />
-
-        <ImageButton
-            android:id="@+id/mic_button"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="@android:color/transparent"
-            android:contentDescription="@string/content_desc_voice"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_mic" />
-
-    </LinearLayout>
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:contentDescription="@string/content_desc_voice"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_mic" />
 
 </LinearLayout>
