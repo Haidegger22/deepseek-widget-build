@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -23,7 +24,11 @@ import com.yourdomain.deepseekwidget.Constants.DEEPSEEK_PACKAGE
 import com.yourdomain.deepseekwidget.Constants.EXTRA_LAUNCH_CAMERA
 import com.yourdomain.deepseekwidget.Constants.EXTRA_LAUNCH_VOICE
 import com.yourdomain.deepseekwidget.Constants.EXTRA_SKIP_VOICE
+import org.json.JSONObject
 import java.io.File
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,26 +37,32 @@ import java.util.Locale
  * Trampoline activity for widget taps: camera capture, voice input, chat routing.
  *
  * Voice flow (one tap on the widget mic):
- *   1. RecognizerIntent (like the original widget) if a recognizer activity exists;
- *   2. otherwise SpeechRecognizer API directly — works through the system
- *      RecognitionService provided by Gboard / Speech Services, no Google app needed;
- *   3. recognized text is shared to DeepSeek as text/plain (DeepSeek does NOT accept
- *      audio files as voice messages — only text and images).
+ *   1. System recognizer (RecognizerIntent / SpeechRecognizer) if available;
+ *   2. otherwise in-app recording + Deepgram STT → recognized text;
+ *   3. text is shared to DeepSeek as text/plain (DeepSeek does NOT accept audio
+ *      files as voice messages — only text and images).
  */
 class VoiceInputActivity : AppCompatActivity() {
 
     private var currentPhotoPath: String? = null
 
-    // ── Voice recognition state ────────────────────────────────────────
+    // ── Voice state (system recognizer) ────────────────────────────────
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
     private var listeningStartMs = 0L
     private var lastPartialText: String? = null
     private var stopFallbackRunnable: Runnable? = null
+
+    // ── Voice state (in-app recording + Deepgram) ──────────────────────
+    private var mediaRecorder: MediaRecorder? = null
+    private var audioFile: File? = null
+    private var isRecording = false
+    private var recordingStartMs = 0L
+
     private val timerHandler = Handler(Looper.getMainLooper())
     private val timerRunnable = object : Runnable {
         override fun run() {
-            updateListeningTimer()
+            updateTimer()
             timerHandler.postDelayed(this, 1000)
         }
     }
@@ -87,6 +98,9 @@ class VoiceInputActivity : AppCompatActivity() {
             speechRecognizer?.destroy()
             speechRecognizer = null
         }
+        if (isRecording) {
+            abortRecording()
+        }
     }
 
     override fun onBackPressed() {
@@ -96,6 +110,9 @@ class VoiceInputActivity : AppCompatActivity() {
             speechRecognizer?.cancel()
             speechRecognizer = null
             isListening = false
+        }
+        if (isRecording) {
+            abortRecording()
         }
         super.onBackPressed()
     }
@@ -143,8 +160,7 @@ class VoiceInputActivity : AppCompatActivity() {
             return
         }
 
-        // 1. RecognizerIntent — если на устройстве есть activity-распознаватель
-        //    (Google app / Speech Services UI). Как в оригинальном виджете.
+        // 1. Системный распознаватель (RecognizerIntent activity) — как оригинал.
         val resolvers = packageManager.queryIntentActivities(
             Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0
         )
@@ -153,19 +169,24 @@ class VoiceInputActivity : AppCompatActivity() {
             return
         }
 
-        // 2. SpeechRecognizer API напрямую — работает через RecognitionService,
-        //    который предоставляет Gboard / Speech Services (без Google app).
+        // 2. SpeechRecognizer API (RecognitionService).
         if (SpeechRecognizer.isRecognitionAvailable(this)) {
             startInAppSpeechRecognition()
             return
         }
 
-        // 3. Распознавание речи вообще недоступно
+        // 3. Встроенный STT через Deepgram (работает без Google).
+        if (BuildConfig.DEEPGRAM_API_KEY.isNotBlank()) {
+            startRecording()
+            return
+        }
+
+        // 4. Ничего не доступно.
         Toast.makeText(this, R.string.voice_unavailable, Toast.LENGTH_SHORT).show()
         finish()
     }
 
-    /** Old path: system recognizer activity with its own UI. */
+    /** Path 1: system recognizer activity with its own UI. */
     private fun startSystemVoiceRecognition() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -179,7 +200,7 @@ class VoiceInputActivity : AppCompatActivity() {
         }
     }
 
-    /** In-app listening screen backed by SpeechRecognizer API (Gboard/Speech Services). */
+    /** Path 2: in-app listening via SpeechRecognizer API. */
     private fun startInAppSpeechRecognition() {
         setContentView(R.layout.activity_voice_record)
 
@@ -228,8 +249,6 @@ class VoiceInputActivity : AppCompatActivity() {
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {
-                // Копим частично распознанный текст — пригодится, если stopListening
-                // не вернёт onResults (некоторые распознаватели игнорируют его).
                 lastPartialText = partialResults
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
@@ -255,24 +274,13 @@ class VoiceInputActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateListeningTimer() {
-        val elapsed = (System.currentTimeMillis() - listeningStartMs) / 1000
-        val mm = elapsed / 60
-        val ss = elapsed % 60
-        findViewById<TextView>(R.id.recording_timer)?.text =
-            String.format(Locale.US, "%d:%02d", mm, ss)
-    }
-
     private fun stopListening() {
         if (!isListening) {
             finish()
             return
         }
-        // Просим распознаватель остановиться (асинхронно).
         speechRecognizer?.stopListening()
-        // Фолбэк: некоторые распознаватели (Gboard) игнорируют stopListening и
-        // продолжают слушать до паузы. Если через 3 с результат не пришёл —
-        // завершаем принудительно (используем последний частичный текст).
+        // Fallback: если распознаватель не вернул результат за 3 с — завершаем принудительно.
         val fallback = Runnable {
             if (isListening) {
                 Log.d(TAG, "stopListening fallback: forcing finish")
@@ -292,6 +300,154 @@ class VoiceInputActivity : AppCompatActivity() {
         stopFallbackRunnable?.let { timerHandler.removeCallbacks(it) }
         stopFallbackRunnable = fallback
         timerHandler.postDelayed(fallback, 3000)
+    }
+
+    // ── Path 3: in-app recording + Deepgram STT ─────────────────────────
+
+    /** Shows the recording screen and starts MediaRecorder immediately. */
+    private fun startRecording() {
+        setContentView(R.layout.activity_voice_record)
+
+        findViewById<Button>(R.id.stop_button).setOnClickListener { stopAndSend() }
+
+        audioFile = File(cacheDir, "voice_${System.currentTimeMillis()}.ogg")
+        try {
+            mediaRecorder = MediaRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    setOutputFormat(MediaRecorder.OutputFormat.OGG)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
+                } else {
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                }
+                setAudioSamplingRate(48000)
+                setAudioEncodingBitRate(64000)
+                setOutputFile(audioFile!!.absolutePath)
+                prepare()
+                start()
+            }
+            isRecording = true
+            recordingStartMs = System.currentTimeMillis()
+            timerHandler.post(timerRunnable)
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaRecorder start failed", e)
+            Toast.makeText(this, R.string.voice_audio_error, Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    private fun updateTimer() {
+        val elapsed = if (isRecording) {
+            (System.currentTimeMillis() - recordingStartMs) / 1000
+        } else {
+            (System.currentTimeMillis() - listeningStartMs) / 1000
+        }
+        val mm = elapsed / 60
+        val ss = elapsed % 60
+        findViewById<TextView>(R.id.recording_timer)?.text =
+            String.format(Locale.US, "%d:%02d", mm, ss)
+    }
+
+    /** Stops recording and sends audio to Deepgram STT, then text → DeepSeek. */
+    private fun stopAndSend() {
+        timerHandler.removeCallbacks(timerRunnable)
+        if (!isRecording) {
+            finish()
+            return
+        }
+        isRecording = false
+
+        try {
+            mediaRecorder?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaRecorder stop failed", e)
+        }
+        mediaRecorder?.release()
+        mediaRecorder = null
+
+        val file = audioFile
+        if (file != null && file.exists() && file.length() > 0) {
+            findViewById<TextView>(R.id.recording_timer)?.text = "…"
+            transcribeWithDeepgram(file)
+        } else {
+            Toast.makeText(this, R.string.voice_audio_error, Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    private fun abortRecording() {
+        isRecording = false
+        try {
+            mediaRecorder?.stop()
+        } catch (_: Exception) {
+        }
+        mediaRecorder?.release()
+        mediaRecorder = null
+        audioFile?.delete()
+        audioFile = null
+    }
+
+    /** Sends the recorded audio to Deepgram and shares the transcript to DeepSeek. */
+    private fun transcribeWithDeepgram(file: File) {
+        Thread {
+            var conn: HttpURLConnection? = null
+            try {
+                val apiKey = BuildConfig.DEEPGRAM_API_KEY
+                val url = URL("https://api.deepgram.com/v1/listen?model=nova-3&language=ru&smart_format=true")
+                conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Authorization", "Token $apiKey")
+                conn.setRequestProperty("Content-Type", "audio/ogg")
+                conn.doOutput = true
+                conn.connect()
+
+                file.inputStream().use { input ->
+                    val output: OutputStream = conn.outputStream
+                    output.use { out -> input.copyTo(out) }
+                }
+
+                val code = conn.responseCode
+                val body = if (code in 200..299) {
+                    conn.inputStream.bufferedReader().readText()
+                } else {
+                    conn.errorStream?.bufferedReader()?.readText() ?: ""
+                }
+
+                if (code in 200..299) {
+                    val json = JSONObject(body)
+                    val transcript = json
+                        .getJSONObject("results")
+                        .getJSONArray("channels")
+                        .getJSONObject(0)
+                        .getJSONArray("alternatives")
+                        .getJSONObject(0)
+                        .getString("transcript")
+                    runOnUiThread {
+                        if (transcript.isNotBlank()) {
+                            shareTextToDeepSeek(transcript)
+                        } else {
+                            Toast.makeText(this, R.string.voice_unavailable, Toast.LENGTH_SHORT).show()
+                            finish()
+                        }
+                    }
+                } else {
+                    Log.e(TAG, "Deepgram HTTP $code: ${body.take(300)}")
+                    runOnUiThread {
+                        Toast.makeText(this, "STT error ($code)", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Deepgram request failed", e)
+                runOnUiThread {
+                    Toast.makeText(this, R.string.voice_unavailable, Toast.LENGTH_SHORT).show()
+                    finish()
+                }
+            } finally {
+                conn?.disconnect()
+            }
+        }.start()
     }
 
     // ── Permissions ─────────────────────────────────────────────────────
