@@ -141,14 +141,22 @@ class VoiceInputActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.stop_button).setOnClickListener { stopAndSend() }
 
-        audioFile = File(cacheDir, "voice_${System.currentTimeMillis()}.m4a")
+        audioFile = File(cacheDir, "voice_${System.currentTimeMillis()}.ogg")
         try {
             mediaRecorder = MediaRecorder().apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(44100)
-                setAudioEncodingBitRate(128000)
+                // DeepSeek принимает голосовые только в OGG/Opus (audio/opus).
+                // m4a/AAC он отклоняет («аудиосообщение не поддерживается»).
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    setOutputFormat(MediaRecorder.OutputFormat.OGG)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
+                } else {
+                    // Старые Android (до 10) не умеют Opus в MediaRecorder — fallback
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                }
+                setAudioSamplingRate(48000)
+                setAudioEncodingBitRate(64000)
                 setOutputFile(audioFile!!.absolutePath)
                 prepare()
                 start()
@@ -214,7 +222,8 @@ class VoiceInputActivity : AppCompatActivity() {
     private fun shareAudioToDeepSeek(contentUri: Uri) {
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             setPackage(DEEPSEEK_PACKAGE)
-            type = "audio/mp4"
+            // DeepSeek принимает голосовые только в OGG/Opus (audio/opus)
+            type = "audio/ogg"
             putExtra(Intent.EXTRA_STREAM, contentUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
