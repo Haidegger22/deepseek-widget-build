@@ -1,0 +1,49 @@
+# ============================================================
+#  DeepSeekWidget — .gitignore
+# ============================================================
+
+# ── Android Studio / IntelliJ IDEA ──────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ── Gradle build outputs ─────────────────────────────────────
+.gradle/
+build/
+app/build/
+**/build/
+
+# ── Local config (machine-specific, NEVER commit) ────────────
+local.properties
+keystore.properties
+
+# ── Signing / Keystore files ─────────────────────────────────
+*.jks
+*.keystore
+*.p12
+*.hprof
+
+# ── Generated APKs & Bundles ─────────────────────────────────
+*.apk
+*.aab
+
+# ── Kotlin incremental compilation ───────────────────────────
+**/.kotlin/
+
+# ── Lint & test outputs ──────────────────────────────────────
+lint-results*
+lint-baseline.xml
+app/lint-baseline.xml
+**/test-results/
+**/reports/
+
+# ── OS junk ──────────────────────────────────────────────────
+.DS_Store
+Desktop.ini
+Thumbs.db
+ehthumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────
+*.log
+captures/
