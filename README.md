@@ -1,27 +1,25 @@
-# 🐳 DeepSeekWidget — One-Tap AI Access
+# 🐳 DeepSeek Widget — One-Tap AI Access
 
-> An open-source Android home screen widget for instant access to DeepSeek — chat, voice, and camera.
+> Android home screen widget for instant access to DeepSeek — chat, voice, and camera.
 
-[![GitHub Release](https://img.shields.io/github/v/release/rajit2004/DeepSeekWidget?style=for-the-badge&logo=android&color=00D4AA)](https://github.com/rajit2004/DeepSeekWidget/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/Haidegger22/deepseek-widget-build?style=for-the-badge&logo=android&color=00D4AA)](https://github.com/Haidegger22/deepseek-widget-build/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat&logo=android)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0-purple?style=flat&logo=kotlin)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/rajit2004?style=for-the-badge&logo=githubsponsors&color=EA4AAA)](https://github.com/sponsors/rajit2004)
-[![Changelog](https://img.shields.io/badge/Changelog-v1.2-00D4AA?style=for-the-badge)](CHANGELOG.md)
-[![Watch the demo video](https://img.shields.io/badge/📺-Watch%20Demo-blue?style=for-the-badge)](https://github.com/user-attachments/assets/8aa1dd20-2e60-4885-9a86-f4872f49b12e)
 
 ---
 
 ## 📱 Download & Install
 
-[![Download APK](https://img.shields.io/badge/Download-Latest%20APK-blue?style=for-the-badge&logo=github)](https://github.com/rajit2004/DeepSeekWidget/releases/latest)
+[![Download APK](https://img.shields.io/badge/Download-Latest%20APK-blue?style=for-the-badge&logo=github)](https://github.com/Haidegger22/deepseek-widget-build/releases/latest)
 
-> ✅ **v1.2 is live!** Camera and voice routing fully working. Download `app-release.apk` (~1.0 MB) from the [Releases page](https://github.com/rajit2004/DeepSeekWidget/releases).
-
-1. Download `app-release.apk` from the [Releases page](https://github.com/rajit2004/DeepSeekWidget/releases/latest)
+1. Download `app-release.apk` from the [Releases page](https://github.com/Haidegger22/deepseek-widget-build/releases/latest)
 2. Enable **Install unknown apps** for your browser/file manager in device settings
 3. Open the APK and install
 4. Long-press your home screen → **Widgets** → **DeepSeek Widget**
+
+> ✅ Latest version includes a permanent signing key — future updates install
+> over the previous version without uninstalling.
 
 ---
 
@@ -30,25 +28,18 @@
 | Feature | Description |
 |---|---|
 | 🏠 **Instant Chat** | One tap opens DeepSeek directly to chat — no unlock, no navigation. |
-| 🎤 **Voice-to-Chat** | Tap mic → speak → transcribed text lands in DeepSeek's composer ready to send. |
+| 🎤 **Voice** | Mic button opens the DeepSeek app with its **built-in voice recording** — no system speech recognizer required. |
 | 📷 **Camera-to-Chat** | Snap a photo from the home screen and send it straight to DeepSeek for visual analysis. |
-| 🎨 **Native Feel** | DeepSeek's teal accent, adapts to system light/dark theme. |
-| 📦 **Ultra-Lightweight** | R8-optimized. ~1.0 MB APK, zero background services, zero battery drain. |
+| 🎨 **Custom Design** | 40% transparent background with the DeepSeek whale logo, black icons with teal neon outline. |
+| 📦 **Ultra-Lightweight** | R8-optimized. ~1.6 MB APK, zero background services, zero battery drain. |
 | 🕊️ **Privacy First** | No data collected. Widget is a pure router to the official DeepSeek app. |
-
----
-
-## 🎥 Demo Video
-
-Watch the DeepSeekWidget in action – one tap from the home screen to chat, voice, or camera input.
-
-<video src="https://github.com/user-attachments/assets/8aa1dd20-2e60-4885-9a86-f4872f49b12e" width="400" controls style="border:1px solid #ccc; border-radius:8px;"></video>
 
 ---
 
 ## 🧠 How It Works
 
-DeepSeekWidget uses a **"Capture and Share"** architecture — the only reliable way to pass content into another app from a home-screen widget:
+The widget is a **"Capture and Route"** architecture — it opens the official
+DeepSeek app directly or shares content into it from a home-screen widget:
 
 ```
 Widget tap
@@ -56,14 +47,17 @@ Widget tap
 PendingIntent → VoiceInputActivity (transparent, no UI)
     ↓
   [Chat tap]          [Mic tap]                    [Camera tap]
-  Open DeepSeek       RecognizerIntent              Camera intent + FileProvider
-                      → transcript text             → JPEG saved to scoped storage
+  Open DeepSeek       Open DeepSeek voice          Camera intent + FileProvider
+  (deep link)         (built-in recording)         → JPEG saved to scoped storage
                            ↓                               ↓
-                      ACTION_SEND (text/plain)       ACTION_SEND (image/jpeg)
+                      DeepSeek voice UI             ACTION_SEND (image/jpeg)
                            ↓                               ↓
                       DeepSeek chat composer ←────────────┘
 ```
 
+- **Voice** uses a deep link (`chat.deepseek.com/chat?action=voice`) into the
+  DeepSeek app — its built-in voice recording works without Google services
+  or any external speech-to-text.
 - `FileProvider` ensures camera images are shared securely without exposing raw file paths
 - `PendingIntent` flags are set to `FLAG_IMMUTABLE` for Android 12+ compliance
 - Each widget instance uses unique request codes so multiple placed widgets never conflict
@@ -80,7 +74,7 @@ PendingIntent → VoiceInputActivity (transparent, no UI)
 | UI | XML RemoteViews + Material Components |
 | Minimum SDK | Android 8.0 (API 26) |
 | Target SDK | Android 15 (API 35) |
-| Build | Gradle KTS + R8 shrinking |
+| Build | Gradle KTS + R8 shrinking, CI via GitHub Actions |
 
 ---
 
@@ -90,19 +84,23 @@ PendingIntent → VoiceInputActivity (transparent, no UI)
 > generic to make forking straightforward.
 
 ```
-DeepSeekWidget/
+deepseek-widget-build/
+├── .github/workflows/
+│   └── build-apk.yml        ← CI: builds debug+release APK on push to build-apk
 ├── app/src/main/
 │   ├── java/com/yourdomain/deepseekwidget/
 │   │   ├── Constants.kt              ← Package IDs, deep link URIs, intent extras
 │   │   ├── DeepSeekWidgetProvider.kt ← Widget lifecycle, RemoteViews, PendingIntents
-│   │   └── VoiceInputActivity.kt     ← Camera + voice capture logic
+│   │   └── VoiceInputActivity.kt     ← Camera capture + voice routing logic
 │   └── res/
-│       ├── drawable/                 ← Widget icons and background shape
+│       ├── drawable/                 ← Neon icons, background shape, whale vector
+│       ├── drawable-nodpi/           ← Official DeepSeek logo (transparent PNG)
 │       ├── layout/deepseek_widget.xml
 │       ├── values/                   ← colors, strings, themes
 │       └── xml/
 │           ├── deepseek_widget_info.xml  ← Widget metadata (size, update period)
 │           └── file_paths.xml            ← FileProvider path config
+├── keystore/                ← Permanent signing key (same for all CI builds)
 ├── build.gradle.kts
 └── README.md
 ```
@@ -112,29 +110,12 @@ DeepSeekWidget/
 ## ⚡ Build Locally
 
 ```bash
-git clone https://github.com/rajit2004/DeepSeekWidget.git
-cd DeepSeekWidget
+git clone https://github.com/Haidegger22/deepseek-widget-build.git
+cd deepseek-widget-build
+git checkout build-apk
 ./gradlew assembleDebug
 # Output: app/build/outputs/apk/debug/app-debug.apk
 ```
-
----
-
-## 🤝 Contributing
-
-[![Contributing Guide](https://img.shields.io/badge/Read-Contributing%20Guide-00D4AA?style=flat&logo=github)](CONTRIBUTING.md)
-
-Bug fixes, new features, OEM testing, and translations are all welcome.  
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and areas that need help.
-
----
-
-## 👨‍💻 Author
-
-**Ranesh Rajit** — B.Tech CS Student, India
-
-[![GitHub](https://img.shields.io/badge/GitHub-rajit2004-black?style=flat&logo=github)](https://github.com/rajit2004)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-ranesh--kun-blue?style=flat&logo=linkedin)](https://linkedin.com/in/ranesh-kun)
 
 ---
 
@@ -143,3 +124,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and areas that nee
 MIT — free to use, modify, and distribute with attribution.
 
 > *Independent open-source project. Not affiliated with or endorsed by DeepSeek.*
+> *Forked from [rajit2004/DeepSeekWidget](https://github.com/rajit2004/DeepSeekWidget).*
