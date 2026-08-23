@@ -105,6 +105,17 @@ class VoiceInputActivity : AppCompatActivity() {
     }
 
     private fun startVoiceFlow() {
+        // 1. Приоритет: встроенный голосовой ввод приложения DeepSeek.
+        //    Не зависит от Google/системного распознавателя речи.
+        if (packageManager.getLaunchIntentForPackage(DEEPSEEK_PACKAGE) != null) {
+            routeToDeepSeekNative("voice")
+            return
+        }
+        // 2. Запасной вариант: системное распознавание речи.
+        startSystemVoiceRecognition()
+    }
+
+    private fun startSystemVoiceRecognition() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to DeepSeek")
