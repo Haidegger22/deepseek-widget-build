@@ -6,16 +6,16 @@
     android:background="@drawable/widget_background"
     android:padding="4dp">
 
-    <!-- DeepSeek whale mascot as background (subtle, low alpha) -->
+    <!-- DeepSeek logo (whale) as background — official logo, subtle alpha -->
     <ImageView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_gravity="center"
-        android:alpha="0.40"
+        android:alpha="0.50"
         android:contentDescription="@null"
         android:importantForAccessibility="no"
         android:scaleType="centerInside"
-        android:src="@drawable/ic_deepseek_whale" />
+        android:src="@drawable/ic_deepseek_logo" />
 
     <!-- Buttons row: camera | mic (neon icons on top of the whale) -->
     <LinearLayout
